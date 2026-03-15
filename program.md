@@ -1,75 +1,73 @@
-# autoresearch program (binary segmentation)
+# autoresearch program (binary segmentation loop)
 
-This program defines the autonomous experimentation loop for binary semantic segmentation.
+This repository is for **autonomous research**, not just model training scripts.
 
-## Setup
+## Loop entrypoint
 
-1. Create/use a run branch (e.g. `autoresearch/<tag>`).
-2. Ensure dependencies are installed: `uv sync`.
-3. Initialize `results.tsv` with header (tab-separated):
+Use `autoresearch_loop.py` as the experiment loop entrypoint.
 
-```
-commit	val_dice	memory_gb	status	description
-```
+It executes:
+1. Candidate mutation (small, controlled change)
+2. Short-budget train + fixed evaluation
+3. Metric comparison vs best
+4. Keep/revert decision
+5. Experiment memory update
 
-4. Baseline run (short budget):
+## Controlled mutation surface
 
-```bash
-uv run train.py --config configs/short.json --output-dir runs/baseline > run.log 2>&1
-uv run evaluate.py --config configs/short.json --checkpoint runs/baseline/model.pt >> run.log 2>&1
-```
+Allowed mutation files:
+- `train.py`
+- `model_zoo.py`
+- `losses.py`
+- `configs/short.json`
 
-## Rules
+Locked files (must not change during candidate runs):
+- `evaluate.py` (fixed metric logic)
+- `configs/smoke.json` (plumbing baseline)
 
-- The task is **binary semantic segmentation only**.
-- Keep train/eval split:
-  - `train.py`: train + save checkpoint.
-  - `evaluate.py`: fixed validation Dice metric.
-- The fixed comparison metric is `val_dice` (**higher is better**).
-- Keep changes minimal and reviewable.
+## Fixed budgets
 
-## Experiment loop
+- Smoke: `configs/smoke.json` (plumbing check)
+- Short: `configs/short.json` (candidate comparison budget)
 
-Repeat forever:
+Keep/revert uses only short-budget metric.
 
-1. Record current commit as candidate base.
-2. Make one experimental code change.
-3. Commit the change.
-4. Run short budget experiment:
+## Fixed metric
 
-```bash
-uv run train.py --config configs/short.json --output-dir runs/current > run.log 2>&1
-uv run evaluate.py --config configs/short.json --checkpoint runs/current/model.pt >> run.log 2>&1
-```
+- Metric name: `val_dice`
+- Source of truth: `evaluate.py`
+- Direction: **higher is better**
 
-5. Extract metric:
+## Commands
 
-```bash
-grep "^val_dice:" run.log
-```
-
-6. If command output is empty, mark as crash and inspect:
-
-```bash
-tail -n 80 run.log
-```
-
-7. Append one row to `results.tsv` with:
-   - short commit hash
-   - `val_dice` (0.000000 on crash)
-   - memory_gb (0.0 if unavailable/crash)
-   - `keep` / `discard` / `crash`
-   - short description
-
-8. Keep/revert logic:
-   - If `val_dice` improves (higher), keep commit.
-   - If `val_dice` is equal or worse, revert to previous best commit.
-
-## Smoke check
-
-Before larger edits, verify plumbing with smoke budget:
+Smoke check:
 
 ```bash
 uv run train.py --config configs/smoke.json --output-dir runs/smoke
 uv run evaluate.py --config configs/smoke.json --checkpoint runs/smoke/model.pt
 ```
+
+Run one closed-loop iteration (includes baseline init if needed):
+
+```bash
+uv run autoresearch_loop.py --candidate lr_up_20pct
+```
+
+Run another candidate:
+
+```bash
+uv run autoresearch_loop.py --candidate unet_wider
+```
+
+## Experiment memory
+
+Loop writes:
+- `results/experiments.tsv` with columns:
+  - timestamp
+  - hypothesis
+  - changed_files
+  - command
+  - metric
+  - decision
+  - best_metric
+- `results/best.json` with persistent best metric state.
